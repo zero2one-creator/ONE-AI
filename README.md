@@ -1,5 +1,7 @@
 # ONE AI 🤖
 
+[English](./README_EN.md) | 简体中文
+
 > 一个 AI 聚合应用，提问一次，自动提交多个 AI 助手回答。
 
 **为什么需要 ONE AI？**
@@ -20,7 +22,7 @@
 
 ## ✨ 特性
 
-- 🚀 **多 AI 聚合** - 在一个应用内同时使用 DeepSeek、Yuanbao、Kimi、豆包、通义, ChatGPT, Gemini 等 12+ 个主流 AI
+- 🚀 **多 AI 聚合** - 在一个应用内同时使用 DeepSeek、Yuanbao、Kimi、豆包、通义, ChatGPT, Gemini 等 10+ 个主流 AI
 - 🔄 **一键分屏** - 支持纵向分屏，可自由拖拽调整窗口大小
 - 🎯 **一键搜索** - 在搜索框输入问题，一键发送到所有已打开的 AI 应用
 - 💾 **会话持久化** - 使用独立 session，保持各 AI 应用的登录状态
