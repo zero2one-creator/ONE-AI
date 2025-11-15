@@ -1,0 +1,462 @@
+// appStore 使用 pinia 管理
+import { defineStore } from "pinia";
+
+import {
+  DEFAULT_SPLIT_LAYOUT,
+  DEFAULT_TABS,
+  APP_SEARCH_CONFIGS,
+  appMap,
+} from "../const/defaultConfig";
+import { getItem, setItem } from "../utils/localStorage";
+
+export interface App {
+  id: string;
+  name: string;
+  url: string;
+  logo: string;
+  bodered?: boolean;
+}
+
+export interface Tab {
+  id: string;
+  app: App;
+  title: string;
+}
+
+export interface SplitPane {
+  id: string;
+  type: "single" | "split";
+  direction?: "horizontal" | "vertical";
+  children?: SplitPane[];
+  tabId?: string | null; // 如果是 single 类型，关联的 tab id
+  size?: number; // 当前面板宽度百分比（仅一维横向布局使用）
+}
+
+// 用于持久化的 Tab 结构，只存 appId 等最小信息
+export interface PersistedTab {
+  id: string;
+  appId: string;
+  title: string;
+}
+
+// 应用搜索配置接口
+export interface AppSearchConfig {
+  inputSelector: string; // 输入框选择器
+  submitSelector?: string; // 提交按钮选择器（可选）
+  submitMethod?: "click" | "enter"; // 提交方式：点击按钮或按回车
+}
+
+export const useAppStore = defineStore("app", {
+  state: () => {
+    // 从本地缓存恢复 tabs
+    const persistedTabs = getItem<PersistedTab[]>("oneai_tabs", {
+      defaultValue: DEFAULT_TABS as PersistedTab[],
+    });
+
+    const tabs: Tab[] = persistedTabs
+      .map((t) => {
+        const app = appMap[t.appId];
+        if (!app) return null;
+        return {
+          id: t.id,
+          app,
+          title: t.title,
+        } as Tab;
+      })
+      .filter((t): t is Tab => t !== null);
+
+    // 如果恢复结果为空，则退回默认 tabs
+    const finalTabs = tabs.length
+      ? tabs
+      : (DEFAULT_TABS.map((t: any) => ({
+          id: t.id,
+          app: appMap[t.appId],
+          title: t.title,
+        })) as Tab[]);
+
+    // 从本地缓存恢复 splitLayout
+    const splitLayout = getItem<SplitPane>("oneai_split_layout", {
+      defaultValue: DEFAULT_SPLIT_LAYOUT as SplitPane,
+    });
+
+    return {
+      tabs: finalTabs,
+      activeTabId: null as string | null,
+      splitLayout,
+      // 应用搜索配置映射
+      appSearchConfigs: new Map<string, AppSearchConfig>(
+        APP_SEARCH_CONFIGS as any
+      ),
+    };
+  },
+  getters: {
+    getTabs: (state) => state.tabs,
+    getSplitLayout: (state) => state.splitLayout,
+  },
+  actions: {
+    // ---------- Tab 管理 ----------
+
+    // 持久化当前 tabs 和 splitLayout
+    persistState() {
+      const tabsForPersist: PersistedTab[] = this.tabs.map((t) => ({
+        id: t.id,
+        appId: t.app.id,
+        title: t.title,
+      }));
+      setItem("oneai_tabs", tabsForPersist);
+      setItem("oneai_split_layout", this.splitLayout);
+    },
+
+    addTab(app: App) {
+      const tabId = `${app.id}-${Date.now()}`;
+      const tab: Tab = {
+        id: tabId,
+        app,
+        title: app.name,
+      };
+
+      // 如果 tab 已存在，直接激活
+      const existingTab = this.tabs.find((t) => t.app.id === app.id);
+      if (existingTab) {
+        this.activeTabId = existingTab.id;
+        // 仅激活已有 tab，不修改布局，因此这里不必持久化
+        return existingTab.id;
+      }
+
+      this.tabs.push(tab);
+      this.activeTabId = tabId;
+
+      // 确保 tab 显示在面板中
+      this.ensureTabInActivePane(tabId);
+
+      // 立刻持久化 tabs 和布局，避免依赖 beforeunload
+      this.persistState();
+
+      return tabId;
+    },
+    removeTab(tabId: string) {
+      const index = this.tabs.findIndex((t) => t.id === tabId);
+      if (index === -1) return;
+
+      // 在删除前找到包含该 tab 的面板
+      const pane = this.findPaneByTabId(tabId);
+
+      this.tabs.splice(index, 1);
+
+      // 如果删除的是当前激活的 tab，激活下一个或上一个
+      if (this.activeTabId === tabId) {
+        if (this.tabs.length > 0) {
+          const newIndex = Math.min(index, this.tabs.length - 1);
+          this.activeTabId = this.tabs[newIndex]?.id || null;
+        } else {
+          this.activeTabId = null;
+        }
+      }
+
+      // 从布局中移除该 tab
+      this.removeTabFromLayout(tabId);
+
+      // 如果该面板没有其他 tab，自动关闭面板
+      // 单个面板（single）只能有一个 tab，删除后肯定为空
+      if (pane && pane.type === "single") {
+        if (pane.id !== "root") {
+          // 如果不是根面板，关闭该面板
+          this.closePane(pane.id);
+        } else {
+          // 如果是根面板，确保它是空的（removeTabFromLayout 已经处理了）
+          // 这里不需要额外操作
+        }
+      }
+
+      // 删除 tab / 面板 后立即持久化
+      this.persistState();
+    },
+    switchTab(tabId: string) {
+      if (this.tabs.find((t) => t.id === tabId)) {
+        this.activeTabId = tabId;
+        // 确保 tab 显示在面板中（如果已经在某个面板中，不移动）
+        this.ensureTabInActivePane(tabId, true);
+      }
+    },
+
+    // 确保 tab 显示在某个面板中（扁平横向布局版本）
+    ensureTabInActivePane(tabId: string, preferActivePane: boolean = false) {
+      // 如果 preferActivePane 为 true，尝试找到当前显示该 tab 的面板
+      if (preferActivePane) {
+        const currentPane = this.findPaneByTabId(tabId);
+        if (currentPane) {
+          // tab 已经在某个面板中显示，不需要移动
+          return;
+        }
+      }
+
+      // 当前只维护一层横向 children
+      if (this.splitLayout.type === "split") {
+        const children = this.splitLayout.children || [];
+
+        // 1. 优先找第一个空面板
+        const empty = children.find((p) => p.type === "single" && !p.tabId);
+        if (empty) {
+          empty.tabId = tabId;
+          return;
+        }
+
+        // 2. 如果没有 panel，则创建一个
+        if (children.length === 0) {
+          this.splitLayout.children = [
+            {
+              id: `pane-1`,
+              type: "single",
+              tabId,
+            },
+          ];
+          return;
+        }
+
+        // 3. 没有空面板但已有面板，则使用第一个面板
+        const first = children[0];
+        if (first && first.type === "single") {
+          first.tabId = tabId;
+        }
+      }
+    },
+
+    // 查找包含指定 tab 的面板（扁平布局）
+    findPaneByTabId(tabId: string): SplitPane | null {
+      if (this.splitLayout.type !== "split" || !this.splitLayout.children) {
+        return null;
+      }
+      return (
+        this.splitLayout.children.find(
+          (p) => p.type === "single" && p.tabId === tabId
+        ) || null
+      );
+    },
+
+    isTabOpen(appId: string) {
+      return this.tabs.some((tab) => tab.app.id === appId);
+    },
+
+    // 刷新指定 tab 对应的面板（用于点击已有应用时触发刷新）
+    refreshTab(tabId: string) {
+      const pane = this.findPaneByTabId(tabId);
+      if (!pane) return;
+      window.dispatchEvent(
+        new CustomEvent("refresh-pane", {
+          detail: { paneId: pane.id },
+        })
+      );
+    },
+
+    // ---------- 一维横向分屏管理 ----------
+    // 顶部 SearchBar 的分屏按钮：在当前一维布局末尾追加一个空 panel
+    // 上限与提示逻辑在 SearchBar 组件内处理，这里只负责真正新增 panel
+    addPanel() {
+      if (this.splitLayout.type !== "split") return;
+      const newId = `pane-${Date.now()}`;
+      const newPane: SplitPane = {
+        id: newId,
+        type: "single",
+        tabId: null,
+      };
+
+      if (!this.splitLayout.children) {
+        this.splitLayout.children = [newPane];
+      } else {
+        this.splitLayout.children.push(newPane);
+      }
+
+      // 新增 panel 后持久化
+      this.persistState();
+    },
+
+    // 关闭指定 panel（仅一维 children）
+    closePane(paneId: string) {
+      if (this.splitLayout.type !== "split" || !this.splitLayout.children) {
+        return;
+      }
+
+      const index = this.splitLayout.children.findIndex((p) => p.id === paneId);
+      if (index === -1) return;
+
+      const pane = this.splitLayout.children[index];
+      const tabId = pane.type === "single" ? pane.tabId : null;
+
+      // 从布局中移除该 panel
+      this.splitLayout.children.splice(index, 1);
+
+      // 至少保留一个空面板，避免整个区域为空
+      if (this.splitLayout.children.length === 0) {
+        this.splitLayout.children.push({
+          id: "pane-empty",
+          type: "single",
+          tabId: null,
+        });
+      }
+
+      // 删除对应的 tab
+      if (tabId) {
+        const tabIndex = this.tabs.findIndex((t) => t.id === tabId);
+        if (tabIndex !== -1) {
+          const removed = this.tabs[tabIndex];
+          this.tabs.splice(tabIndex, 1);
+
+          // 如果删的是当前激活 tab，切到第一个 tab
+          if (this.activeTabId === removed.id) {
+            this.activeTabId = this.tabs[0]?.id || null;
+          }
+        }
+      }
+
+      // 关闭 panel 后持久化
+      this.persistState();
+    },
+
+    // 在一维数组中移动 panel（用于 header 拖拽排序）
+    movePane(sourcePaneId: string, targetPaneId: string) {
+      if (this.splitLayout.type !== "split" || !this.splitLayout.children) {
+        return;
+      }
+
+      const children = this.splitLayout.children;
+      const fromIndex = children.findIndex((p) => p.id === sourcePaneId);
+      const toIndex = children.findIndex((p) => p.id === targetPaneId);
+
+      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return;
+
+      const [moved] = children.splice(fromIndex, 1);
+      children.splice(toIndex, 0, moved);
+
+      // 拖拽排序后持久化
+      this.persistState();
+    },
+
+    // 记录当前所有 panel 的宽度（百分比）到 splitLayout 中
+    // 实际持久化在应用关闭时统一进行（见 persistState）
+    setPaneSizes(sizes: number[]) {
+      if (this.splitLayout.type !== "split" || !this.splitLayout.children) {
+        return;
+      }
+      const children = this.splitLayout.children;
+      const len = Math.min(children.length, sizes.length);
+      for (let i = 0; i < len; i++) {
+        const pane = children[i];
+        if (pane.type === "single") {
+          pane.size = sizes[i];
+        }
+      }
+    },
+
+    removeTabFromLayout(tabId: string) {
+      if (this.splitLayout.type !== "split" || !this.splitLayout.children) {
+        return;
+      }
+
+      this.splitLayout.children.forEach((pane) => {
+        if (pane.type === "single" && pane.tabId === tabId) {
+          pane.tabId = null;
+        }
+      });
+    },
+
+    // 获取应用的搜索配置
+    getAppSearchConfig(appId: string): AppSearchConfig {
+      const lowerAppId = appId.toLowerCase();
+      console.log("🔍 [appStore] 查找配置，appId:", lowerAppId);
+      console.log(
+        "📋 [appStore] 所有可用配置:",
+        Array.from(this.appSearchConfigs.keys())
+      );
+      
+      // 优先使用应用特定配置，否则使用默认配置
+      let config = this.appSearchConfigs.get(lowerAppId);
+      if (!config) {
+        config = this.appSearchConfigs.get("default");
+      }
+      
+      // 如果连默认配置都没有，返回一个基本配置
+      if (!config) {
+        console.warn("⚠️ [appStore] 未找到配置，使用回退配置");
+        config = {
+          inputSelector: "textarea, input[type='text'], div[contenteditable='true']",
+          submitMethod: "enter"
+        };
+      }
+      
+      console.log("✅ [appStore] 找到的配置:", config);
+      return config;
+    },
+
+    // 收集所有包含 tab 的面板（扁平布局：根节点 children 即所有 panel）
+    getAllPanesWithTabs(): SplitPane[] {
+      if (this.splitLayout.type !== "split" || !this.splitLayout.children) {
+        return [];
+      }
+      return this.splitLayout.children.filter(
+        (p) => p.type === "single" && !!p.tabId
+      );
+    },
+
+    // 搜索所有应用
+    async searchAllApps(searchText: string): Promise<void> {
+      console.log("🔍 [appStore] searchAllApps 被调用，搜索内容:", searchText);
+      const panesWithTabs = this.getAllPanesWithTabs();
+
+      console.log(
+        "📊 [appStore] 找到的面板数量:",
+        panesWithTabs.length,
+        "所有 tabs:",
+        this.tabs.map((t) => ({ id: t.id, name: t.app.name }))
+      );
+
+      if (panesWithTabs.length === 0) {
+        console.warn("⚠️ [appStore] 没有打开的应用");
+        return;
+      }
+
+      // 为每个面板发送搜索请求
+      const searchPromises = panesWithTabs.map((pane) => {
+        const tab = this.tabs.find((t) => t.id === pane.tabId);
+        if (!tab) {
+          console.warn("⚠️ [appStore] 未找到 tab，paneId:", pane.id);
+          return Promise.resolve();
+        }
+
+        console.log(
+          "📤 [appStore] 向面板发送搜索:",
+          pane.id,
+          "应用:",
+          tab.app.name,
+          "appId:",
+          tab.app.id
+        );
+        const config = this.getAppSearchConfig(tab.app.id);
+        console.log("⚙️ [appStore] 使用的配置:", config);
+        return this.sendSearchToPane(pane.id, searchText, config);
+      });
+
+      await Promise.allSettled(searchPromises);
+      console.log("✅ [appStore] 所有搜索请求已发送");
+    },
+
+    // 向指定面板发送搜索（这个方法会被 AppView 调用）
+    async sendSearchToPane(
+      paneId: string,
+      searchText: string,
+      config: AppSearchConfig
+    ): Promise<void> {
+      console.log("📡 [appStore] 发送 search-pane 事件:", {
+        paneId,
+        searchText,
+        config,
+      });
+      // 这个方法会通过事件或直接调用 AppView 的方法来实现
+      // 由于需要在组件中访问 webview，我们通过事件来触发
+      window.dispatchEvent(
+        new CustomEvent("search-pane", {
+          detail: { paneId, searchText, config },
+        })
+      );
+    },
+  },
+});

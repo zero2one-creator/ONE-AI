@@ -1,0 +1,41 @@
+// @see - https://www.electron.build/configuration/configuration
+{
+  $schema: "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  appId: "com.example.ONEAI",
+  productName: "ONEAI",
+  directories: {
+    output: "release",
+  },
+  files: ["dist/**/*", "dist-electron/**/*"],
+  mac: {
+    icon: "public/one.icns",
+    identity: null,
+    target: [
+      {
+        target: "dmg",
+        arch: ["x64", "arm64"],
+      },
+      {
+        target: "zip",
+        arch: ["x64", "arm64"],
+      },
+    ],
+    category: "public.app-category.productivity",
+  },
+  win: {
+    icon: "public/one.ico",
+    target: [
+      {
+        target: "nsis",
+        arch: ["x64", "ia32", "arm64"],
+      },
+    ],
+  },
+  nsis: {
+    oneClick: false,
+    allowToChangeInstallationDirectory: true,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    shortcutName: "ONEAI",
+  },
+}

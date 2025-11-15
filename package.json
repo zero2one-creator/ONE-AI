@@ -1,0 +1,44 @@
+{
+  "name": "one-ai",
+  "private": true,
+  "version": "1.2.0",
+  "type": "module",
+  "scripts": {
+    "cdev": "node scripts/clean-dev.mjs",
+    "dev": "yarn cdev && vite",
+    "crelease": "node scripts/clean-release.mjs",
+    "build": "yarn crelease && vite build && electron-builder",
+    "build:mac": "yarn crelease && vite build && electron-builder --mac",
+    "build:win": "yarn crelease && vite build && electron-builder --win",
+    "build:all": "yarn crelease && vite build && electron-builder --mac --win",
+    "preview": "vite preview",
+    "generate-icons": "electron-icon-builder --input=./public/one.png --output=build --flatten",
+    "vue-devtools": "vue-devtools"
+  },
+  "dependencies": {
+    "7zip-bin": "^5.2.0",
+    "dayjs": "^1.11.19",
+    "lodash-es": "^4.17.21",
+    "naive-ui": "^2.43.1",
+    "pinia": "^3.0.4",
+    "unocss": "^66.5.5",
+    "vue": "^3.4.21",
+    "vue-resizable-panels": "^0.0.1",
+    "vue-router": "^4.6.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.4",
+    "@vue/devtools": "^8.0.3",
+    "electron": "^30.5.1",
+    "electron-builder": "^24.13.3",
+    "electron-devtools-installer": "^4.0.0",
+    "electron-icon-builder": "^2.0.1",
+    "sass": "^1.93.3",
+    "typescript": "^5.2.2",
+    "vite": "^5.1.6",
+    "vite-plugin-electron": "^0.28.6",
+    "vite-plugin-electron-renderer": "^0.14.5",
+    "vue-tsc": "^2.0.26"
+  },
+  "main": "dist-electron/main.js"
+}
