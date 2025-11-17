@@ -246,6 +246,13 @@ export const useAppStore = defineStore("app", {
       return this.tabs.some((tab) => tab.app.id === appId);
     },
 
+    // 根据应用 id 或 URL 查找已存在的 tab（用于点击时去重）
+    findExistingTabByApp(app: App): Tab | undefined {
+      return this.tabs.find(
+        (tab) => tab.app.id === app.id || tab.app.url === app.url
+      );
+    },
+
     /**
      * 在一维横向分屏中打开应用（AI 应用 & 其他网站通用逻辑）
      * 1. 如果已打开：激活 + 刷新
@@ -258,16 +265,17 @@ export const useAppStore = defineStore("app", {
      */
     openAppWithSplit(app: App, maxPanels: number): "ok" | "limit" {
       // 1. 已打开：刷新 + 激活对应 tab 和 pane
-      if (this.isTabOpen(app.id)) {
-        const existingTab = this.tabs.find((tab) => tab.app.id === app.id);
-        if (existingTab) {
-          this.activeTabId = existingTab.id;
-          const pane = this.findPaneByTabId(existingTab.id);
-          if (pane) {
-            this.activePaneId = pane.id;
-          }
-          this.refreshTab(existingTab.id);
+      const existingTab = this.findExistingTabByApp(app);
+      if (existingTab) {
+        // 确保这个 tab 挂在某个面板上（可能之前被移出布局）
+        this.ensureTabInActivePane(existingTab.id, true);
+
+        this.activeTabId = existingTab.id;
+        const pane = this.findPaneByTabId(existingTab.id);
+        if (pane) {
+          this.activePaneId = pane.id;
         }
+        this.refreshTab(existingTab.id);
         return "ok";
       }
 
@@ -302,9 +310,12 @@ export const useAppStore = defineStore("app", {
      * 3. 覆盖面板中原有的 tab（如果存在）
      */
     openWebsiteWithSplit(app: App): "ok" {
-      // 如果相同网站已打开（按 URL 去重）：刷新 + 激活对应 tab 和 pane
-      const existingTab = this.tabs.find((tab) => tab.app.url === app.url);
+      // 如果相同网站已打开（按 id 或 URL 去重）：刷新 + 激活对应 tab 和 pane
+      const existingTab = this.findExistingTabByApp(app);
       if (existingTab) {
+        // 同样确保 tab 绑定到某个面板
+        this.ensureTabInActivePane(existingTab.id, true);
+
         this.activeTabId = existingTab.id;
         const pane = this.findPaneByTabId(existingTab.id);
         if (pane) {
