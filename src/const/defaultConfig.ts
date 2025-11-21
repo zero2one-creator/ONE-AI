@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import BaicuanAppLogo from "@/assets/apps/baixiaoying.webp?url";
 import DoubaoAppLogo from "@/assets/apps/doubao.png?url";
 import GeminiAppLogo from "@/assets/apps/gemini.png?url";
